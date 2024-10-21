@@ -12,7 +12,7 @@ import nltk
 from nltk.corpus import stopwords
 #%%
 from nltk.corpus import stopwords
-nltk.download('stopwords')
+# nltk.download('stopwords')
 # Get the list of stop words
 stop_words = set(stopwords.words('english'))
 stop_words = stop_words.union(set(string.punctuation))
@@ -23,11 +23,14 @@ common_words=common_words[~(common_words.index.isin(stop_words) | (common_words[
 common_words=list(common_words.index)
 #%%
 def get_example_pairs(input_text,
-                      max_total_tokens=15,
+                      max_total_tokens=8,
+                      max_output_tokens=100,
                       temperature=1,
                       top_logprobs=3,
-                      system_instruction="continue the text",
-                      category=""):
+                      system_instruction="Continue the sentence without repeating the prompt",
+                      category="",
+                      stop_words=[],
+                      n=1):
     
     input_length=len(tokenizer.encode(input_text))
     responseX = client.chat.completions.create(
@@ -36,71 +39,204 @@ def get_example_pairs(input_text,
             {"role": "system",
             "content": system_instruction},
             {
-            "role": "assistant",
+            "role": "user",
             "content": input_text
             }
             ]
-        ,max_tokens=max_total_tokens-input_length
+        ,max_tokens=min(max_output_tokens,max(1,max_total_tokens-input_length))
         ,temperature=temperature
         ,logprobs=True
         ,top_logprobs=top_logprobs
+        ,n=n
+        ,stop_words=stop_words
     )
 
-    cumulative_message = input_text+" "
-    cumulative_token_length = responseX.usage.prompt_tokens-11-len(tokenizer.encode(system_instruction))
     fingerprint=responseX.system_fingerprint
     df=pd.DataFrame()
-    for tkn_info in responseX.choices[0].logprobs.content:
-        tokens=[[z.token,z.logprob] for z in tkn_info.top_logprobs]
-        dfp=pd.DataFrame(tokens,columns=["token0","logprob"])
-        dfp["prob"]=np.exp(dfp["logprob"])
-        tokens2 = {f'token{i+1}': dfp['token0'].iloc[i] for i in range(len(dfp))}
-        probs = {f'prob{i+1}': dfp['prob'].iloc[i] for i in range(len(dfp))}
-        combined_dict = {**tokens2, **probs}
-        dfp = pd.DataFrame([combined_dict])
-        dfp["cum_prob2"]=dfp["prob1"]+dfp["prob2"]
-        dfp["cum_prob3"]=dfp["prob1"]+dfp["prob2"]+dfp["prob3"]
-        #dfp["cum_sum"] = list(accumulate(dfp["prob"]))
-        #dfp["cum_max"] = max(dfp["prob"])
-        dfp["actual_token"] = tkn_info.token
-        dfp["context"] = cumulative_message
-        dfp["context_length"] =cumulative_token_length
-        dfp["start_text"]= input_text
-        dfp["id"] = hash(fingerprint+cumulative_message)
-        dfp["fp"] = fingerprint
-        dfp["usage"] = responseX.usage.total_tokens
-        dfp["category"]=category
-        df=pd.concat([df,dfp])
-        cumulative_message+=tkn_info.token
-        cumulative_token_length+=1
+    for choice in responseX.choices:
+        cumulative_message = input_text+" "
+        cumulative_token_length = responseX.usage.prompt_tokens-11-len(tokenizer.encode(system_instruction))
+        for tkn_info in choice.logprobs.content:
+            tokens=[[z.token,z.logprob] for z in tkn_info.top_logprobs]
+            dfp=pd.DataFrame(tokens,columns=["token0","logprob"])
+            dfp["prob"]=np.exp(dfp["logprob"])
+            tokens2 = {f'token{i+1}': dfp['token0'].iloc[i] for i in range(len(dfp))}
+            probs = {f'prob{i+1}': dfp['prob'].iloc[i] for i in range(len(dfp))}
+            combined_dict = {**tokens2, **probs}
+            dfp = pd.DataFrame([combined_dict])
+            dfp["cum_prob2"]=dfp["prob1"]+dfp["prob2"]
+            dfp["cum_prob3"]=dfp["prob1"]+dfp["prob2"]+dfp["prob3"]
+            #dfp["cum_sum"] = list(accumulate(dfp["prob"]))
+            #dfp["cum_max"] = max(dfp["prob"])
+            dfp["actual_token"] = tkn_info.token
+            dfp["context"] = cumulative_message
+            dfp["context_length"] =cumulative_token_length
+            dfp["start_text"]= input_text
+            dfp["id"] = hash(fingerprint+cumulative_message)
+            dfp["fp"] = fingerprint
+            dfp["usage"] = responseX.usage.total_tokens
+            dfp["category"]=category
+            df=pd.concat([df,dfp])
+            cumulative_message+=tkn_info.token
+            cumulative_token_length+=1
     print(responseX.usage.total_tokens)    
     df=df.reset_index(drop=True)
     return(df)
+
+#%%
+common_words=[
+    "The", "I", "It", "He", "She", "They", "We", "You", "A", "An",
+    "This", "That", "There", "What", "When", "Where", "Why", "How",
+    "If", "In", "On", "As", "At", "For", "To", "With", "But", "And",
+    "So", "While"
+]
+random_words = [
+    "Suddenly",
+    "Perhaps",
+    "Gently",
+    "Silence",
+    "Shadows",
+    "Tomorrow",
+    "Darkness",
+    "Beyond",
+    "Meanwhile",
+    "Instantly",
+    "Fortunately",
+    "Anger",
+    "Quietly",
+    "Somewhere",
+    "Gracefully",
+    "Yesterday",
+    "Time",
+    "Hesitantly",
+    "Slowly",
+    "Somewhere",
+    "Victory",
+    "Strangely",
+    "Never",
+    "Often",
+    "Forever",
+    "Betrayal",
+    "Hope",
+    "Rarely",
+    "Dreams",
+    "Desperately",
+    "Mystery",
+    "Comfortably",
+    "Painfully",
+    "Once",
+    "Here",
+    "Fear",
+    "Overwhelmed",
+    "Quiet",
+    "Somewhere",
+    "Downstairs",
+    "Thankfully",
+    "Hunger",
+    "Pain",
+    "Brightness",
+    "Eventually",
+    "Tenderly",
+    "Alone",
+    "Yesterday",
+    "Trembling",
+    "Suddenly"
+]
+
+#%%
+z=get_example_pairs("It allows for a",temperature=0,n=1)
+#%%
+df_common_t1=pd.concat([get_example_pairs(x,temperature=1,category="common1_t1",n=50) for x in common_words])
+df_common_t05=pd.concat([get_example_pairs(x,temperature=0.5,category="common1_t0.5",n=25) for x in common_words])
+df_common_t15=pd.concat([get_example_pairs(x,temperature=1.5,category="common1_t1.5",n=25) for x in common_words])
+df_random_t1=pd.concat([get_example_pairs(x,temperature=1,category="random1_t1",n=3) for x in random_words])
+df_random_t05=pd.concat([get_example_pairs(x,temperature=0.5,category="random1_t0.5",n=3) for x in random_words])
+df_random_t15=pd.concat([get_example_pairs(x,temperature=1.5,category="random1_t1.5",n=3) for x in random_words])
+df=pd.concat([df_common_t1,
+df_common_t05,
+df_common_t15,
+df_random_t1,
+df_random_t05,
+df_random_t15])
+#%%
+manual_sentences=["The cool evening"]
+df_manual=pd.concat([get_example_pairs(x,temperature=1,category="manual",n=5) for x in manual_sentences])
 #%%
 sentence_starters=[]
 #sentence_starters=common_words[1:20]
 #df=pd.concat([get_example_pairs(x,temperature=1) for x in sentence_starters])
-df2u=pd.concat([get_example_pairs(x,temperature=1,category="2upper") for x in words_2_upper])
-df2l=pd.concat([get_example_pairs(x,temperature=1,category="2lower") for x in words_2_lower])
-df3u=pd.concat([get_example_pairs(x,temperature=1,category="3upper") for x in words_3_upper])
-df4u=pd.concat([get_example_pairs(x,temperature=1,category="4upper") for x in words_4_upper])
-df4u_business=pd.concat([get_example_pairs(x,temperature=1,category="4upper_business") for x in words_4_upper_business])
-df=pd.concat([df2u,df2l,df3u,df4u,df4u_business])
-df2u.to_csv("outputs/run1.csv",index=False)
+# df2u=pd.concat([get_example_pairs(x,temperature=1,category="2upper") for x in words_2_upper])
+# df2l=pd.concat([get_example_pairs(x,temperature=1,category="2lower") for x in words_2_lower])
+# df3u=pd.concat([get_example_pairs(x,temperature=1,category="3upper") for x in words_3_upper])
+# df4u=pd.concat([get_example_pairs(x,temperature=1,category="4upper") for x in words_4_upper])
+# df4u_business=pd.concat([get_example_pairs(x,temperature=1,category="4upper_business") for x in words_4_upper_business])
+# df=pd.concat([df2u,df2l,df3u,df4u,df4u_business])
+# df2u.to_csv("outputs/run1.csv",index=False)
 #%%
-df["classification"]=""
-df["token1_stripped"]=df["token1"].str.strip().str.lower()
-df["token2_stripped"]=df["token2"].str.strip().str.lower()
-potential_condition=((df["cum_prob2"]>0.8)  
-     & (df["prob1"]<0.6)  
-     & ~(df["token1_stripped"].isin(stop_words)) 
-     & ~(df["token2_stripped"].isin(stop_words))  
-     & (df["token1_stripped"].str.len()>=4) 
-     & (df["token1_stripped"].str.len()>=4)) 
-df.loc[potential_condition,"classification"] = "potential"
-df=pd.merge(df, x, how='left', on=["token1_stripped","token2_stripped"],suffixes=["",".new"])
-df["classification"]=df["classification.new"].fillna(df["classification"])
-df=df.drop("classification.new",axis=1)
+def get_score(prob2,context_length,k=25,j=0.2,desired_max_length=5,length_weight=0.1):
+    score_base=(1 / (1 + np.exp(-k * (prob2 - j))))
+    return (score_base)*(np.exp(-np.maximum(context_length-desired_max_length,0)*length_weight))
+
+def filter_results(df):
+    df["classification"]=""
+    df["token1_stripped"]=df["token1"].str.strip().str.lower()
+    df["token2_stripped"]=df["token2"].str.strip().str.lower()
+    #df["score_base"]=1 / (1 + np.exp(-25 * (df["prob2"] - 0.2)))
+    #df["score"]=(1 / (1 + np.exp(-25 * (df["prob2"] - 0.2))))*np.exp(-np.maximum(df["context_length"]-5,0)*0.1)
+    df["score"]=get_score(df["prob2"],df["context_length"])
+    is_stop_word=(df["token1_stripped"].isin(stop_words)) | (df["token2_stripped"].isin(stop_words)) 
+    is_short_word=(df["token1_stripped"].str.len()<4) | (df["token2_stripped"].str.len()<4)
+    is_short_context=(df["context"].str.len()<8) | (df["context_length"]<=2)
+    # potential_condition=(
+    #     #(df["cum_prob2"]>0.7)  
+    #     # & (df["prob1"]<0.6)  
+    #     ~(df["token1_stripped"].isin(stop_words)) 
+    #      & ~(df["token2_stripped"].isin(stop_words))  
+    #      & (df["token1_stripped"].str.len()>=4) 
+    #      & (df["token1_stripped"].str.len()>=4)) 
+    df.loc[is_stop_word,"classification"] = "is_stop_word"
+    df.loc[is_short_word,"classification"] = "is_short_word"
+    df.loc[is_short_context,"classification"] = "is_short_context"
+    excl_list=["my ","my,","I ","I'","information","model","intelligence","artificial","data"]
+    df_filtered=df[~is_stop_word & ~is_short_word & ~is_short_context].sort_values("score",ascending=False)
+    import re
+    def has_direct_repeated_words(text):
+        # Regular expression to find directly repeated words
+        pattern = r'\b(\w+)\s+\1\b'
+        return bool(re.search(pattern, text, re.IGNORECASE))
+
+    df_filtered=df_filtered[~df_filtered['context'].apply(has_direct_repeated_words)]
+    df_filtered=df_filtered.drop_duplicates(subset=['id'])
+    df_filtered=df_filtered[df_filtered["score"]>=0.2]
+    df_filtered=df_filtered[(df_filtered["prob2"]-df_filtered["prob3"])>0.05]
+    df_filtered=df_filtered.reset_index()
+    df_filtered["pair_keys"] = df_filtered.apply(lambda row: tuple(sorted([row['token1'], row['token2']])), axis=1)
+    df_filtered=df_filtered[~df_filtered["pair_keys"].duplicated()]
+    df_filtered=df_filtered[~df_filtered["context"].str.contains('|'.join(excl_list ),case=False)]
+    df_filtered=df_filtered[~df_filtered["token1"].str.contains('|'.join(excl_list ),case=False)]
+    df_filtered=df_filtered[~df_filtered["token2"].str.contains('|'.join(excl_list ),case=False)]
+    df_filtered["classification"]="potential"
+    return(df_filtered)
+#%%
+word_list_4=["The sun was low", "In the quiet room", "Beyond the distant hills", "She heard a noise", "He looked at her", "Under the dark sky", "They walked in silence", "A sudden gust of", "The stars were bright", "The forest was silent", "As the storm grew", "In the early morning", "He had always known", "She felt a chill", "The door creaked open", "Through the misty air", "Over the old bridge", "His heart was racing", "A shadow moved quickly", "She could barely see", "He thought about leaving", "They stood side by", "The wind howled fiercely", "In the distance, a", "She whispered his name", "The waves crashed loudly", "He felt the weight", "Underneath the cold earth", "As the rain fell", "A flicker of light", "The clock struck midnight", "In the corner, a", "She couldn’t believe her", "He reached for the", "The ground beneath trembled", "As they approached the", "The night was quiet", "His breath came fast", "A light appeared suddenly", "She watched the horizon", "The air smelled fresh", "They exchanged a glance", "He couldn’t stop thinking", "In the shadows, a", "Her eyes were wide", "The silence was deafening", "The door slammed shut", "In the distance, he", "She turned and saw", "He picked up the", "A cold breeze blew", "They waited in silence", "She felt the warmth", "The sun dipped below", "A soft voice called", "He tried to remember", "She reached out slowly", "As the night deepened", "The fire crackled softly", "He closed his eyes", "A flash of lightning", "The tension was palpable", "He stood on the", "Her heartbeat quickened as", "The moonlight cast shadows", "The road stretched ahead", "She knelt beside the", "He was certain that", "They had been waiting", "She sighed in relief", "His hands were trembling", "A strange sound echoed", "She hesitated for a", "He could not believe", "The water was calm", "They whispered among themselves", "Her voice broke the", "The fog was thick", "A chill ran down", "He had waited for", "She saw the figure", "The sky turned dark", "The room grew colder", "He stood at the", "She couldn’t help but", "A soft light glowed", "His footsteps echoed loudly", "The door opened slowly", "He heard a rustling", "She felt something move", "The forest seemed alive", "A loud crash sounded", "She looked behind her", "He could hear voices", "The flames danced wildly", "She caught a glimpse", "A heavy mist settled", "He turned and walked", "The city lights flickered", "The air grew colder", "She reached for his", "In the blink of", "A distant howl echoed", "The trees swayed gently", "He leaned against the"]
+df_word_list_4=pd.concat([get_example_pairs(x,temperature=0,category="word_list_4",n=1) for x in word_list_4])
+df_word_list_4f=filter_results(df_word_list_4)
+#%%
+potential_items=filter_results(df_word_list_4)
+df_refined_list=[]
+for row in (potential_items).itertuples():
+    out=get_example_pairs(row.context,max_total_tokens=row.context_length+1,
+    temperature=0,category=row.category,n=1)
+    df_refined_list.append(out)
+df_refined=filter_results(pd.concat(df_refined_list))
+df_refined["classification"]="reviewed"
+#%%
+# for i in np.arange(0.0,0.8,.025):
+#     print(f"{i} {len(df_filtered[df_filtered['score']>=i])}")
+
+# df=pd.merge(df, x, how='left', on=["token1_stripped","token2_stripped"],suffixes=["",".new"])
+# df["classification"]=df["classification.new"].fillna(df["classification"])
+# df=df.drop("classification.new",axis=1)
 #%%
 x=pd.DataFrame(
 [["corridor",	 "hallway", "reviewed"],
@@ -154,11 +290,17 @@ firebase_admin.initialize_app(cred)#, {
 #})
 db = firestore.client()
 #%%
-for row in df[df["classification"]!=""].itertuples():
+colnames=['token1_stripped','token2_stripped','prob1','prob2','classification','category','context','score']
+manual_data=[
+    ["air","breeze",0.67796,0.32036,"reviewed","","the cool evening",get_score(0.32036,4)]
+]
+df_manual=pd.DataFrame(manual_data,columns=colnames)
+
+for row in df_refined.itertuples():
     #print(row.token1.strip())
     data = {
-        'target1':row.token1,
-        'target2':row.token2,
+        'target1':row.token1_stripped,
+        'target2':row.token2_stripped,
         'prob1':row.prob1,
         'prob2':row.prob2,
         'classification': row.classification,
@@ -167,8 +309,9 @@ for row in df[df["classification"]!=""].itertuples():
         'difficulty': 0,
         'stale': False,
         'user_count': 0,
+        'score':row.score
     }
-    ref = db.collection(f"targets/TEST/{row.classification}_items")
+    ref = db.collection(f"targets/TEST2/{row.classification}_items")
     ref.add(data)
 
 
